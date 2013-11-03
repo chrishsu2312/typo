@@ -10,6 +10,17 @@ class Admin::ContentController < Admin::BaseController
     @items = Tag.find_with_char params[:article][:keywords].strip
     render :inline => "<%= raw auto_complete_result @items, 'name' %>"
   end
+  
+  def merge
+    current = Article.find(params[:id])
+    
+    if current.merge(params[:article_id])
+      flash[:notice] = "Merge worked"
+    else
+      flash[:notice] = "Merge died"
+    end
+    redirect_to :action => 'edit', :id => params[:id]
+  end
 
   def index
     @search = params[:search] ? params[:search] : {}

@@ -71,6 +71,15 @@ class Article < Content
     end
   end
 
+  def merge(other_article_id)
+
+    toBeMerged = Article.find(other_article_id)
+    self.body += toBeMerged.body
+    self.save!
+    self.comments = self.comments.all + toBeMerged.comments.all
+    toBeMerged.destroy
+  end
+
   def set_permalink
     return if self.state == 'draft'
     self.permalink = self.title.to_permalink if self.permalink.nil? or self.permalink.empty?
@@ -84,13 +93,13 @@ class Article < Content
 
   has_state(:state,
             :valid_states  => [:new, :draft,
-                               :publication_pending, :just_published, :published,
-                               :just_withdrawn, :withdrawn],
-            :initial_state =>  :new,
-            :handles       => [:withdraw,
-                               :post_trigger,
-                               :send_pings, :send_notifications,
-                               :published_at=, :just_published?])
+              :publication_pending, :just_published, :published,
+              :just_withdrawn, :withdrawn],
+              :initial_state =>  :new,
+              :handles       => [:withdraw,
+                :post_trigger,
+                :send_pings, :send_notifications,
+                :published_at=, :just_published?])
 
   include Article::States
 
@@ -104,10 +113,10 @@ class Article < Content
     end
 
     def search_with_pagination(search_hash, paginate_hash)
-      
+
       state = (search_hash[:state] and ["no_draft", "drafts", "published", "withdrawn", "pending"].include? search_hash[:state]) ? search_hash[:state] : 'no_draft'
-      
-      
+
+
       list_function  = ["Article.#{state}"] + function_search_no_draft(search_hash)
 
       if search_hash[:category] and search_hash[:category].to_i > 0
@@ -161,309 +170,309 @@ class Article < Content
   def param_array
     @param_array ||=
       [published_at.year,
-                 sprintf('%.2d', published_at.month),
-                 sprintf('%.2d', published_at.day),
-                 permalink].tap \
-      do |params|
-        this = self
-        k = class << params; self; end
-        k.send(:define_method, :to_s) { params[-1] }
-      end
+        sprintf('%.2d', published_at.month),
+        sprintf('%.2d', published_at.day),
+        permalink].tap \
+        do |params|
+      this = self
+      k = class << params; self; end
+    k.send(:define_method, :to_s) { params[-1] }
   end
+end
 
-  def to_param
-    param_array
+def to_param
+  param_array
+end
+
+def trackback_url
+  blog.url_for("trackbacks?article_id=#{self.id}", :only_path => false)
+end
+
+def permalink_by_format(format=nil)
+  if format.nil?
+    permalink_url
+  elsif format.to_sym == :rss
+    feed_url(:rss)
+  elsif format.to_sym == :atom
+    feed_url(:atom)
+  else
+    raise UnSupportedFormat
   end
+end
 
-  def trackback_url
-    blog.url_for("trackbacks?article_id=#{self.id}", :only_path => false)
-  end
+def comment_url
+  blog.url_for("comments?article_id=#{self.id}", :only_path => false)
+end
 
-  def permalink_by_format(format=nil)
-    if format.nil?
-      permalink_url
-    elsif format.to_sym == :rss
-      feed_url(:rss)
-    elsif format.to_sym == :atom
-      feed_url(:atom)
-    else
-      raise UnSupportedFormat
+def preview_comment_url
+  blog.url_for("comments/preview?article_id=#{self.id}", :only_path => false)
+end
+
+def feed_url(format = :rss20)
+  format_extension = format.to_s.gsub(/\d/,'')
+  permalink_url + ".#{format_extension}"
+end
+
+def edit_url
+  blog.url_for(:controller => "/admin/content", :action =>"edit", :id => id)
+end
+
+def delete_url
+  blog.url_for(:controller => "/admin/content", :action =>"destroy", :id => id)
+end
+
+def html_urls
+  urls = Array.new
+  html.gsub(/<a\s+[^>]*>/) do |tag|
+    if(tag =~ /\bhref=(["']?)([^ >"]+)\1/)
+      urls.push($2.strip)
     end
   end
 
-  def comment_url
-    blog.url_for("comments?article_id=#{self.id}", :only_path => false)
-  end
+  urls.uniq
+end
 
-  def preview_comment_url
-    blog.url_for("comments/preview?article_id=#{self.id}", :only_path => false)
-  end
+def really_send_pings(serverurl = blog.base_url, articleurl = nil)
+  return unless blog.send_outbound_pings
 
-  def feed_url(format = :rss20)
-    format_extension = format.to_s.gsub(/\d/,'')
-    permalink_url + ".#{format_extension}"
-  end
+  articleurl ||= permalink_url(nil)
 
-  def edit_url
-    blog.url_for(:controller => "/admin/content", :action =>"edit", :id => id)
-  end
+  weblogupdatesping_urls = blog.ping_urls.gsub(/ +/,'').split(/[\n\r]+/).map(&:strip)
+  pingback_or_trackback_urls = self.html_urls
 
-  def delete_url
-    blog.url_for(:controller => "/admin/content", :action =>"destroy", :id => id)
-  end
+  ping_urls = weblogupdatesping_urls + pingback_or_trackback_urls
 
-  def html_urls
-    urls = Array.new
-    html.gsub(/<a\s+[^>]*>/) do |tag|
-      if(tag =~ /\bhref=(["']?)([^ >"]+)\1/)
-        urls.push($2.strip)
-      end
-    end
+  existing_ping_urls = pings.collect { |p| p.url }
 
-    urls.uniq
-  end
+  ping_urls.uniq.each do |url|
+    begin
+      unless existing_ping_urls.include?(url)
+        ping = pings.build("url" => url)
 
-  def really_send_pings(serverurl = blog.base_url, articleurl = nil)
-    return unless blog.send_outbound_pings
-
-    articleurl ||= permalink_url(nil)
-
-    weblogupdatesping_urls = blog.ping_urls.gsub(/ +/,'').split(/[\n\r]+/).map(&:strip)
-    pingback_or_trackback_urls = self.html_urls
-
-    ping_urls = weblogupdatesping_urls + pingback_or_trackback_urls
-
-    existing_ping_urls = pings.collect { |p| p.url }
-
-    ping_urls.uniq.each do |url|
-      begin
-        unless existing_ping_urls.include?(url)
-          ping = pings.build("url" => url)
-
-          if weblogupdatesping_urls.include?(url)
-            ping.send_weblogupdatesping(serverurl, articleurl)
-          elsif pingback_or_trackback_urls.include?(url)
-            ping.send_pingback_or_trackback(articleurl)
-          end
+        if weblogupdatesping_urls.include?(url)
+          ping.send_weblogupdatesping(serverurl, articleurl)
+        elsif pingback_or_trackback_urls.include?(url)
+          ping.send_pingback_or_trackback(articleurl)
         end
-      rescue Exception => e
-        logger.error(e)
-        # in case the remote server doesn't respond or gives an error,
-        # we should throw an xmlrpc error here.
       end
+    rescue Exception => e
+      logger.error(e)
+      # in case the remote server doesn't respond or gives an error,
+      # we should throw an xmlrpc error here.
     end
   end
+end
 
-  def next
-    self.class.find(:first, :conditions => ['published_at > ?', published_at],
-                    :order => 'published_at asc')
+def next
+  self.class.find(:first, :conditions => ['published_at > ?', published_at],
+                  :order => 'published_at asc')
+end
+
+def previous
+  self.class.find(:first, :conditions => ['published_at < ?', published_at],
+                  :order => 'published_at desc')
+end
+
+# Count articles on a certain date
+def self.count_by_date(year, month = nil, day = nil, limit = nil)
+  if !year.blank?
+    count(:conditions => { :published_at => time_delta(year, month, day),
+          :published => true })
+  else
+    count(:conditions => { :published => true })
   end
+end
 
-  def previous
-    self.class.find(:first, :conditions => ['published_at < ?', published_at],
-                    :order => 'published_at desc')
+def self.find_by_published_at
+  super(:published_at)
+end
+
+def self.get_or_build_article id = nil
+  return Article.find(id) if id
+  article = Article.new.tap do |art|
+    art.allow_comments = art.blog.default_allow_comments
+    art.allow_pings = art.blog.default_allow_pings
+    art.text_filter = art.blog.text_filter
+    art.old_permalink = art.permalink_url unless art.permalink.nil? or art.permalink.empty?
+    art.published = true
   end
+end
 
-  # Count articles on a certain date
-  def self.count_by_date(year, month = nil, day = nil, limit = nil)
-    if !year.blank?
-      count(:conditions => { :published_at => time_delta(year, month, day),
-              :published => true })
-    else
-      count(:conditions => { :published => true })
-    end
-  end
+# Finds one article which was posted on a certain date and matches the supplied dashed-title
+# params is a Hash
+def self.find_by_permalink(params)
+  date_range = self.time_delta(params[:year], params[:month], params[:day])
 
-  def self.find_by_published_at
-    super(:published_at)
-  end
+  req_params = {}
+  req_params[:permalink] = params[:title] if params[:title]
+  req_params[:published_at] = date_range if date_range
 
-  def self.get_or_build_article id = nil
-    return Article.find(id) if id
-    article = Article.new.tap do |art|
-      art.allow_comments = art.blog.default_allow_comments
-      art.allow_pings = art.blog.default_allow_pings
-      art.text_filter = art.blog.text_filter
-      art.old_permalink = art.permalink_url unless art.permalink.nil? or art.permalink.empty?
-      art.published = true
-    end
-  end
+  return nil if req_params.empty? # no search if no params send
 
-  # Finds one article which was posted on a certain date and matches the supplied dashed-title
-  # params is a Hash
-  def self.find_by_permalink(params)
-    date_range = self.time_delta(params[:year], params[:month], params[:day])
+  article = find_published(:first, :conditions => req_params)
+  return article if article
 
-    req_params = {}
-    req_params[:permalink] = params[:title] if params[:title]
-    req_params[:published_at] = date_range if date_range
-
-    return nil if req_params.empty? # no search if no params send
-
+  if params[:title]
+    req_params[:permalink] = CGI.escape(params[:title])
     article = find_published(:first, :conditions => req_params)
     return article if article
-
-    if params[:title]
-      req_params[:permalink] = CGI.escape(params[:title])
-      article = find_published(:first, :conditions => req_params)
-      return article if article
-    end
-
-    raise ActiveRecord::RecordNotFound
   end
 
-  def self.find_by_params_hash(params = {})
-    params[:title] ||= params[:article_id]
-    find_by_permalink(params)
-  end
+  raise ActiveRecord::RecordNotFound
+end
 
-  # Fulltext searches the body of published articles
-  def self.search(query, args={})
-    query_s = query.to_s.strip
-    if !query_s.empty? && args.empty?
-      Article.searchstring(query)
-    elsif !query_s.empty? && !args.empty?
-      Article.searchstring(query).page(args[:page]).per(args[:per])
-    else
-      []
-    end
-  end
+def self.find_by_params_hash(params = {})
+  params[:title] ||= params[:article_id]
+  find_by_permalink(params)
+end
 
-  def keywords_to_tags
-    Article.transaction do
-      tags.clear
-      tags <<
-      keywords.to_s.scan(/((['"]).*?\2|[\.\w]+)/).collect do |x|
-        x.first.tr("\"'", '')
-      end.uniq.map do |tagword|
-        Tag.get(tagword)
-      end
+# Fulltext searches the body of published articles
+def self.search(query, args={})
+  query_s = query.to_s.strip
+  if !query_s.empty? && args.empty?
+    Article.searchstring(query)
+  elsif !query_s.empty? && !args.empty?
+    Article.searchstring(query).page(args[:page]).per(args[:per])
+  else
+    []
+  end
+end
+
+def keywords_to_tags
+  Article.transaction do
+    tags.clear
+    tags <<
+    keywords.to_s.scan(/((['"]).*?\2|[\.\w]+)/).collect do |x|
+      x.first.tr("\"'", '')
+    end.uniq.map do |tagword|
+      Tag.get(tagword)
     end
   end
+end
 
-  def interested_users
-    User.find_all_by_notify_on_new_articles(true)
+def interested_users
+  User.find_all_by_notify_on_new_articles(true)
+end
+
+def notify_user_via_email(user)
+  if user.notify_via_email?
+    EmailNotify.send_article(self, user)
+  end
+end
+
+def comments_closed?
+  !(allow_comments? && in_feedback_window?)
+end
+
+def pings_closed?
+  !(allow_pings? && in_feedback_window?)
+end
+
+# check if time to comment is open or not
+def in_feedback_window?
+  self.blog.sp_article_auto_close.zero? ||
+    self.published_at.to_i > self.blog.sp_article_auto_close.days.ago.to_i
+end
+
+def cast_to_boolean(value)
+  ActiveRecord::ConnectionAdapters::Column.value_to_boolean(value)
+end
+# Cast the input value for published= before passing it to the state.
+def published=(newval)
+  state.published = cast_to_boolean(newval)
+end
+
+def content_fields
+  [:body, :extended]
+end
+
+# The web interface no longer distinguishes between separate "body" and
+# "extended" fields, and instead edits everything in a single edit field,
+# separating the extended content using "\<!--more-->".
+def body_and_extended
+  if extended.nil? || extended.empty?
+    body
+  else
+    body + "\n<!--more-->\n" + extended
+  end
+end
+
+# Split apart value around a "\<!--more-->" comment and assign it to our
+# #body and #extended fields.
+def body_and_extended= value
+  parts = value.split(/\n?<!--more-->\n?/, 2)
+  self.body = parts[0]
+  self.extended = parts[1] || ''
+end
+
+def link_to_author?
+  !user.email.blank? && blog.link_to_author
+end
+
+def password_protected?
+  not password.blank?
+end
+
+def add_comment(params)
+  comments.build(params)
+end
+
+def add_category(category, is_primary = false)
+  self.categorizations.build(:category => category, :is_primary => is_primary)
+end
+
+def access_by?(user)
+  user.admin? || user_id == user.id
+end
+
+protected
+
+def set_published_at
+  if self.published and self[:published_at].nil?
+    self[:published_at] = self.created_at || Time.now
+  end
+end
+
+def ensure_settings_type
+  if settings.is_a?(String)
+    # Any dump access forcing de-serialization
+    password.blank?
+  end
+end
+
+def set_defaults
+  if self.attributes.include?("permalink") and
+    (self.permalink.blank? or
+     self.permalink.to_s =~ /article-draft/ or
+     self.state == "draft"
+    )
+    set_permalink
+  end
+  if blog && self.allow_comments.nil?
+    self.allow_comments = blog.default_allow_comments
   end
 
-  def notify_user_via_email(user)
-    if user.notify_via_email?
-      EmailNotify.send_article(self, user)
-    end
+  if blog && self.allow_pings.nil?
+    self.allow_pings = blog.default_allow_pings
   end
 
-  def comments_closed?
-    !(allow_comments? && in_feedback_window?)
-  end
+  true
+end
 
-  def pings_closed?
-    !(allow_pings? && in_feedback_window?)
-  end
+def add_notifications
+  users = interested_users
+  users << self.user if (self.user.notify_watch_my_articles? rescue false)
+  self.notify_users = users.uniq
+end
 
-  # check if time to comment is open or not
-  def in_feedback_window?
-    self.blog.sp_article_auto_close.zero? ||
-      self.published_at.to_i > self.blog.sp_article_auto_close.days.ago.to_i
-  end
+def self.time_delta(year = nil, month = nil, day = nil)
+  return nil if year.nil? && month.nil? && day.nil?
+  from = Time.utc(year, month || 1, day || 1)
 
-  def cast_to_boolean(value)
-    ActiveRecord::ConnectionAdapters::Column.value_to_boolean(value)
-  end
-  # Cast the input value for published= before passing it to the state.
-  def published=(newval)
-    state.published = cast_to_boolean(newval)
-  end
-
-  def content_fields
-    [:body, :extended]
-  end
-
-  # The web interface no longer distinguishes between separate "body" and
-  # "extended" fields, and instead edits everything in a single edit field,
-  # separating the extended content using "\<!--more-->".
-  def body_and_extended
-    if extended.nil? || extended.empty?
-      body
-    else
-      body + "\n<!--more-->\n" + extended
-    end
-  end
-
-  # Split apart value around a "\<!--more-->" comment and assign it to our
-  # #body and #extended fields.
-  def body_and_extended= value
-    parts = value.split(/\n?<!--more-->\n?/, 2)
-    self.body = parts[0]
-    self.extended = parts[1] || ''
-  end
-
-  def link_to_author?
-    !user.email.blank? && blog.link_to_author
-  end
-
-  def password_protected?
-    not password.blank?
-  end
-
-  def add_comment(params)
-    comments.build(params)
-  end
-
-  def add_category(category, is_primary = false)
-    self.categorizations.build(:category => category, :is_primary => is_primary)
-  end
-
-  def access_by?(user)
-    user.admin? || user_id == user.id
-  end
-
-  protected
-
-  def set_published_at
-    if self.published and self[:published_at].nil?
-      self[:published_at] = self.created_at || Time.now
-    end
-  end
-
-  def ensure_settings_type
-    if settings.is_a?(String)
-      # Any dump access forcing de-serialization
-      password.blank?
-    end
-  end
-
-  def set_defaults
-    if self.attributes.include?("permalink") and
-      (self.permalink.blank? or
-       self.permalink.to_s =~ /article-draft/ or
-       self.state == "draft"
-      )
-      set_permalink
-    end
-    if blog && self.allow_comments.nil?
-      self.allow_comments = blog.default_allow_comments
-    end
-
-    if blog && self.allow_pings.nil?
-      self.allow_pings = blog.default_allow_pings
-    end
-
-    true
-  end
-
-  def add_notifications
-    users = interested_users
-    users << self.user if (self.user.notify_watch_my_articles? rescue false)
-    self.notify_users = users.uniq
-  end
-
-  def self.time_delta(year = nil, month = nil, day = nil)
-    return nil if year.nil? && month.nil? && day.nil?
-    from = Time.utc(year, month || 1, day || 1)
-
-    to = from.next_year
-    to = from.next_month unless month.blank?
-    to = from + 1.day unless day.blank?
-    to = to - 1 # pull off 1 second so we don't overlap onto the next day
-    return from..to
-  end
+  to = from.next_year
+  to = from.next_month unless month.blank?
+  to = from + 1.day unless day.blank?
+  to = to - 1 # pull off 1 second so we don't overlap onto the next day
+  return from..to
+end
 end
