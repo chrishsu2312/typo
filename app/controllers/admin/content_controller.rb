@@ -14,7 +14,7 @@ class Admin::ContentController < Admin::BaseController
   def merge
     current = Article.find(params[:id])
     
-    if current.merge(params[:article_id])
+    if current.merge(params[:merge_with])
       flash[:notice] = "Merge worked"
     else
       flash[:notice] = "Merge died"
